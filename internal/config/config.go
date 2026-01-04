@@ -12,7 +12,7 @@ type Config struct {
 	GitHubClientSecret string
 	YandexClientID     string
 	YandexClientSecret string
-	ServerPort         string
+	ServerPort         string // ← ДОБАВЬТЕ ЭТО ПОЛЕ
 }
 
 func Load() *Config {
@@ -24,7 +24,7 @@ func Load() *Config {
 		GitHubClientSecret: getEnv("GITHUB_CLIENT_SECRET", ""),
 		YandexClientID:     getEnv("YANDEX_CLIENT_ID", ""),
 		YandexClientSecret: getEnv("YANDEX_CLIENT_SECRET", ""),
-		ServerPort:         getEnv("PORT", "8080"),
+		ServerPort:         getEnv("PORT", "8080"), // Теперь это поле существует
 	}
 }
 

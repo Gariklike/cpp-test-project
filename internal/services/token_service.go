@@ -4,111 +4,98 @@ import (
 	"errors"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/golang-jwt/jwt/v4"
 )
 
+// Claims структура для JWT токенов
+type AccessTokenClaims struct {
+	UserID      int      `json:"user_id"`
+	Permissions []string `json:"permissions"`
+	jwt.RegisteredClaims
+}
+
+type RefreshTokenClaims struct {
+	UserID int    `json:"user_id"`
+	Email  string `json:"email"`
+	jwt.RegisteredClaims
+}
+
 type TokenService struct {
-	jwtSecret []byte
+	accessSecret  string
+	refreshSecret string
+	accessTTL     time.Duration
+	refreshTTL    time.Duration
 }
 
-func NewTokenService(jwtSecret string) *TokenService {
+func NewTokenService(accessSecret, refreshSecret string, accessTTL, refreshTTL time.Duration) *TokenService {
 	return &TokenService{
-		jwtSecret: []byte(jwtSecret),
+		accessSecret:  accessSecret,
+		refreshSecret: refreshSecret,
+		accessTTL:     accessTTL,
+		refreshTTL:    refreshTTL,
 	}
 }
 
-// GenerateAccessToken создает JWT access token
-func (s *TokenService) GenerateAccessToken(userID string, permissions []string) (string, error) {
-	claims := jwt.MapClaims{
-		"user_id":     userID,
-		"permissions": permissions,
-		"exp":         time.Now().Add(time.Minute * 15).Unix(), // 15 минут
-		"iat":         time.Now().Unix(),
-		"type":        "access",
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(s.jwtSecret)
-}
-
-// GenerateRefreshToken создает JWT refresh token
-func (s *TokenService) GenerateRefreshToken(userID, email string) (string, error) {
-	claims := jwt.MapClaims{
-		"user_id": userID,
-		"email":   email,
-		"exp":     time.Now().Add(time.Hour * 24 * 7).Unix(), // 7 дней
-		"iat":     time.Now().Unix(),
-		"type":    "refresh",
+// GenerateAccessToken создает access токен
+func (s *TokenService) GenerateAccessToken(userID int, permissions []string) (string, error) {
+	claims := AccessTokenClaims{
+		UserID:      userID,
+		Permissions: permissions,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(s.accessTTL)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(s.jwtSecret)
+	return token.SignedString([]byte(s.accessSecret))
 }
 
-// ValidateToken проверяет JWT токен
-func (s *TokenService) ValidateToken(tokenString string) (jwt.MapClaims, error) {
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("unexpected signing method")
-		}
-		return s.jwtSecret, nil
+// GenerateRefreshToken создает refresh токен
+func (s *TokenService) GenerateRefreshToken(userID int, email string) (string, error) {
+	claims := RefreshTokenClaims{
+		UserID: userID,
+		Email:  email,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(s.refreshTTL)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(s.refreshSecret))
+}
+
+// ValidateAccessToken проверяет access токен
+func (s *TokenService) ValidateAccessToken(tokenString string) (*AccessTokenClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &AccessTokenClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return []byte(s.accessSecret), nil
 	})
 
 	if err != nil {
 		return nil, err
 	}
 
-	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+	if claims, ok := token.Claims.(*AccessTokenClaims); ok && token.Valid {
 		return claims, nil
 	}
 
 	return nil, errors.New("invalid token")
 }
 
-// ExtractUserIDFromToken извлекает user_id из токена
-func (s *TokenService) ExtractUserIDFromToken(tokenString string) (string, error) {
-	claims, err := s.ValidateToken(tokenString)
-	if err != nil {
-		return "", err
-	}
+// ValidateRefreshToken проверяет refresh токен
+func (s *TokenService) ValidateRefreshToken(tokenString string) (*RefreshTokenClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &RefreshTokenClaims{}, func(token *jwt.Token) (interface{}, error) {
+		return []byte(s.refreshSecret), nil
+	})
 
-	if userID, ok := claims["user_id"].(string); ok {
-		return userID, nil
-	}
-
-	return "", errors.New("user_id not found in token")
-}
-
-// ExtractPermissionsFromToken извлекает permissions из токена
-func (s *TokenService) ExtractPermissionsFromToken(tokenString string) ([]string, error) {
-	claims, err := s.ValidateToken(tokenString)
 	if err != nil {
 		return nil, err
 	}
 
-	if permsInterface, ok := claims["permissions"].([]interface{}); ok {
-		permissions := make([]string, len(permsInterface))
-		for i, p := range permsInterface {
-			if str, ok := p.(string); ok {
-				permissions[i] = str
-			}
-		}
-		return permissions, nil
+	if claims, ok := token.Claims.(*RefreshTokenClaims); ok && token.Valid {
+		return claims, nil
 	}
 
-	return []string{}, nil
-}
-
-// IsTokenExpired проверяет истек ли срок действия токена
-func (s *TokenService) IsTokenExpired(tokenString string) bool {
-	claims, err := s.ValidateToken(tokenString)
-	if err != nil {
-		return true
-	}
-
-	if exp, ok := claims["exp"].(float64); ok {
-		return time.Unix(int64(exp), 0).Before(time.Now())
-	}
-
-	return true
+	return nil, errors.New("invalid refresh token")
 }

@@ -3,9 +3,9 @@
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"authorization-server/internal/services"
 
-	"internal/services"
+	"github.com/gin-gonic/gin"
 )
 
 type TokenHandler struct {
@@ -20,7 +20,6 @@ func NewTokenHandler(tokenService *services.TokenService, authService *services.
 	}
 }
 
-// RefreshToken обновляет access token
 func (h *TokenHandler) RefreshToken(c *gin.Context) {
 	var request struct {
 		RefreshToken string `json:"refresh_token" binding:"required"`
@@ -32,66 +31,32 @@ func (h *TokenHandler) RefreshToken(c *gin.Context) {
 	}
 
 	// Проверяем refresh token
-	refreshToken, err := h.authService.ValidateRefreshToken(request.RefreshToken)
+	claims, err := h.tokenService.ValidateRefreshToken(request.RefreshToken)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid refresh token"})
-		return
-	}
-
-	// Проверяем срок действия
-	if refreshToken.IsExpired() {
-		// Удаляем просроченный токен
-		h.authService.DeleteRefreshToken(request.RefreshToken)
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "refresh token expired"})
-		return
-	}
-
-	// Получаем пользователя
-	user, err := h.authService.GetUserByEmail(refreshToken.UserID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "user not found"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
 		return
 	}
 
 	// Получаем разрешения пользователя
-	permissions, err := h.authService.GetUserPermissions(user.ID)
+	permissions, err := h.authService.GetUserPermissions(claims.UserID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get permissions"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Генерируем новую пару токенов
-	newAccessToken, err := h.tokenService.GenerateAccessToken(user.ID, permissions)
+	// Генерируем новый access token
+	accessToken, err := h.tokenService.GenerateAccessToken(claims.UserID, permissions)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate access token"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	newRefreshToken, err := h.tokenService.GenerateRefreshToken(user.ID, user.Email)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate refresh token"})
-		return
-	}
-
-	// Сохраняем новый refresh token
-	err = h.authService.SaveRefreshToken(user.ID, newRefreshToken, refreshToken.ExpiresAt)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save refresh token"})
-		return
-	}
-
-	// Удаляем старый refresh token
-	h.authService.DeleteRefreshToken(request.RefreshToken)
 
 	c.JSON(http.StatusOK, gin.H{
-		"access_token":  newAccessToken,
-		"refresh_token": newRefreshToken,
-		"token_type":    "Bearer",
-		"expires_in":    900, // 15 минут в секундах
+		"access_token":  accessToken,
+		"refresh_token": request.RefreshToken,
 	})
 }
 
-// ValidateToken проверяет токен
 func (h *TokenHandler) ValidateToken(c *gin.Context) {
 	var request struct {
 		Token string `json:"token" binding:"required"`
@@ -103,36 +68,26 @@ func (h *TokenHandler) ValidateToken(c *gin.Context) {
 	}
 
 	// Валидируем токен
-	claims, err := h.tokenService.ValidateToken(request.Token)
+	claims, err := h.tokenService.ValidateAccessToken(request.Token)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"valid": false, "error": err.Error()})
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"valid":   false,
+			"message": err.Error(),
+		})
 		return
-	}
-
-	// Проверяем тип токена
-	tokenType, ok := claims["type"].(string)
-	if !ok || tokenType != "access" {
-		c.JSON(http.StatusUnauthorized, gin.H{"valid": false, "error": "not an access token"})
-		return
-	}
-
-	// Проверяем срок действия
-	if exp, ok := claims["exp"].(float64); ok {
-		// Можно добавить дополнительную проверку срока действия
-		_ = exp
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"valid":  true,
-		"claims": claims,
+		"valid":       true,
+		"user_id":     claims.UserID,
+		"exp":         claims.ExpiresAt,
+		"permissions": claims.Permissions,
 	})
 }
 
-// Logout выходит из системы
 func (h *TokenHandler) Logout(c *gin.Context) {
 	var request struct {
-		RefreshToken string `json:"refresh_token"`
-		AllDevices   bool   `json:"all_devices"`
+		RefreshToken string `json:"refresh_token" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -140,30 +95,12 @@ func (h *TokenHandler) Logout(c *gin.Context) {
 		return
 	}
 
-	if request.RefreshToken == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "refresh_token is required"})
+	// Удаляем refresh token из базы
+	err := h.authService.DeleteRefreshToken(request.RefreshToken)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Получаем информацию о токене
-	refreshToken, err := h.authService.ValidateRefreshToken(request.RefreshToken)
-	if err == nil && refreshToken != nil {
-		userID := refreshToken.UserID
-
-		if request.AllDevices {
-			// Удаляем все токены пользователя
-			err = h.authService.DeleteAllUserTokens(userID)
-		} else {
-			// Удаляем только текущий токен
-			err = h.authService.DeleteRefreshToken(request.RefreshToken)
-		}
-
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete tokens"})
-			return
-		}
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "logged out successfully"})
+	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
 }
-

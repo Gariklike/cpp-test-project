@@ -15,14 +15,6 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
 
-type RefreshToken struct {
-	ID        string    `json:"id" db:"id"`
-	UserID    string    `json:"user_id" db:"user_id"`
-	Token     string    `json:"token" db:"token"`
-	ExpiresAt time.Time `json:"expires_at" db:"expires_at"`
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
-}
-
 func (rt *RefreshToken) IsExpired() bool {
 	return time.Now().After(rt.ExpiresAt)
 }
@@ -71,17 +63,17 @@ type AuthRequest struct {
 	Tokens     *AuthTokens `json:"tokens,omitempty"`
 }
 
-type AuthTokens struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-}
-
 type GitHubUserInfo struct {
 	Email string `json:"email"`
 	Name  string `json:"name"`
 }
 
 type YandexUserInfo struct {
-	Email string `json:"default_email"`
-	Name  string `json:"real_name"`
+	ID            string `json:"id"`
+	Login         string `json:"login"`
+	Email         string `json:"default_email"`
+	Name          string `json:"real_name"`
+	FirstName     string `json:"first_name"`
+	LastName      string `json:"last_name"`
+	IsAvatarEmpty bool   `json:"is_avatar_empty"`
 }

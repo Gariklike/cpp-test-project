@@ -1,51 +1,51 @@
 [
   {
-    "text": "Сколько будет 2+2?",
+    "text": "What is 2+2?",
     "options": ["3", "4", "5"],
     "correct": 1
   },
   {
-    "text": "Столица Франции?",
-    "options": ["Берлин", "Париж", "Мадрид"],
+    "text": "What is the capital of France?",
+    "options": ["Berlin", "Paris", "Madrid"],
     "correct": 1
   },
   {
-    "text": "Какой тип данных используется для хранения целых чисел в C++?",
+    "text": "Which data type is used to store integers in C++?",
     "options": ["int", "double", "string"],
     "correct": 0
   },
   {
-    "text": "Какой оператор используется для вывода текста в консоль в C++?",
+    "text": "Which operator is used to output text to the console in C++?",
     "options": ["cin <<", "cout <<", "print()"],
     "correct": 1
   },
   {
-    "text": "Какой символ завершает инструкцию в C++?",
+    "text": "Which symbol ends a statement in C++?",
     "options": [".", ";", ":"],
     "correct": 1
   },
   {
-    "text": "Как называется структура, содержащая несколько значений разных типов?",
+    "text": "What is the name of the structure that contains multiple values of different types?",
     "options": ["array", "struct", "loop"],
     "correct": 1
   },
   {
-    "text": "Какой цикл выполняется хотя бы один раз?",
+    "text": "Which loop executes at least once?",
     "options": ["for", "while", "do while"],
     "correct": 2
   },
   {
-    "text": "Какой заголовочный файл нужен для работы с std::vector?",
+    "text": "Which header file is needed to work with std::vector?",
     "options": ["<vector>", "<array>", "<list>"],
     "correct": 0
   },
   {
-    "text": "Что делает оператор == ?",
-    "options": ["Присваивает значение", "Сравнивает значения", "Удаляет переменную"],
+    "text": "What does the operator == do?",
+    "options": ["Assigns a value", "Compares values", "Deletes a variable"],
     "correct": 1
   },
   {
-    "text": "Какой тип данных хранит текстовые строки?",
+    "text": "Which data type stores text strings?",
     "options": ["char", "string", "bool"],
     "correct": 1
   }

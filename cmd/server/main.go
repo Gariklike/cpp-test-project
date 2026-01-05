@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
 	"authorization-server/internal/config"
@@ -19,6 +18,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func main() {
@@ -30,33 +31,79 @@ func main() {
 	// Инициализация конфигурации
 	cfg := config.Load()
 
-	// Подключение к PostgreSQL
+	// ============= ПОДКЛЮЧЕНИЕ К POSTGRESQL =============
 	db, err := sql.Open("postgres", cfg.DatabaseURL)
 	if err != nil {
-		log.Fatal("Failed to connect to database:", err)
+		log.Fatal("Failed to connect to PostgreSQL:", err)
 	}
 	defer db.Close()
 
-	// Проверка соединения с БД
+	// Проверка соединения с PostgreSQL
 	if err := db.Ping(); err != nil {
-		log.Fatal("Database connection failed:", err)
+		log.Fatal("PostgreSQL connection failed:", err)
+	}
+	log.Println("Connected to PostgreSQL")
+
+	// ============= ПОДКЛЮЧЕНИЕ К MONGODB =============
+	var mongoClient *mongo.Client
+	var mongoDB *mongo.Database
+
+	if cfg.MongoURL != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		mongoClient, err = mongo.Connect(ctx, options.Client().ApplyURI(cfg.MongoURL))
+		if err != nil {
+			log.Printf("Warning: Failed to connect to MongoDB: %v", err)
+			log.Println("Continuing without MongoDB...")
+		} else {
+			// Проверка соединения с MongoDB
+			err = mongoClient.Ping(ctx, nil)
+			if err != nil {
+				log.Printf("Warning: MongoDB ping failed: %v", err)
+			} else {
+				mongoDB = mongoClient.Database(cfg.MongoDatabase)
+				log.Printf("Connected to MongoDB: %s", cfg.MongoDatabase)
+			}
+		}
 	}
 
-	// Инициализация репозиториев через адаптеры
-	userRepo := &PostgresUserRepositoryAdapter{db: db}
-	tokenRepo := &PostgresTokenRepositoryAdapter{db: db}
+	// Отложенное закрытие соединения с MongoDB
+	if mongoClient != nil {
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := mongoClient.Disconnect(ctx); err != nil {
+				log.Printf("Error disconnecting from MongoDB: %v", err)
+			}
+		}()
+	}
 
-	// Redis репозиторий для сессий
+	// ============= ПОДКЛЮЧЕНИЕ К REDIS =============
 	redisRepo, err := redis.NewSessionRepository(cfg.RedisURL)
 	if err != nil {
 		log.Fatal("Failed to connect to Redis:", err)
 	}
 	defer redisRepo.Close()
+	log.Println("Connected to Redis")
 
-	// Создаем адаптер для Redis
+	// ============= ИНИЦИАЛИЗАЦИЯ РЕПОЗИТОРИЕВ =============
+	userRepo := &PostgresUserRepositoryAdapter{db: db}
+	tokenRepo := &PostgresTokenRepositoryAdapter{db: db}
 	sessionRepoAdapter := &SessionRepoAdapter{repo: redisRepo}
 
-	// Конфигурация для OAuth
+	// MongoDB репозиторий (если подключено)
+	var mongoRepo *MongoRepository
+	if mongoDB != nil {
+		mongoRepo = &MongoRepository{
+			client:     mongoClient,
+			database:   mongoDB,
+			collection: mongoDB.Collection("auth_logs"),
+		}
+		log.Println("MongoDB repository initialized")
+	}
+
+	// ============= КОНФИГУРАЦИЯ OAuth =============
 	oauthConfig := &services.Config{
 		GitHubClientID:     cfg.GitHubClientID,
 		GitHubClientSecret: cfg.GitHubClientSecret,
@@ -64,7 +111,7 @@ func main() {
 		YandexClientSecret: cfg.YandexClientSecret,
 	}
 
-	// Инициализация сервисов
+	// ============= ИНИЦИАЛИЗАЦИЯ СЕРВИСОВ =============
 	authService := services.NewAuthService(db, userRepo, tokenRepo)
 	tokenService := services.NewTokenService(
 		cfg.JWTSecret,
@@ -72,28 +119,36 @@ func main() {
 		1*time.Hour,
 		24*7*time.Hour,
 	)
-
 	oauthService := services.NewOAuthService(oauthConfig, sessionRepoAdapter)
 	permissionService := services.NewPermissionService()
 
-	// Инициализация обработчиков
+	// ============= ИНИЦИАЛИЗАЦИЯ ОБРАБОТЧИКОВ =============
 	authHandler := handlers.NewAuthHandler(authService, tokenService, oauthService, permissionService)
 	tokenHandler := handlers.NewTokenHandler(tokenService, authService)
 	codeAuthHandler := handlers.NewCodeAuthHandler(authService)
 
-	// Настройка роутера
+	// ============= НАСТРОЙКА РОУТЕРА =============
 	router := gin.Default()
 
 	// Добавляем статические файлы (HTML страницы)
 	router.LoadHTMLGlob("templates/*")
 
+	// Middleware для логирования в MongoDB
+	if mongoRepo != nil {
+		router.Use(mongoLoggingMiddleware(mongoRepo))
+	}
+
 	// Public endpoints
 	router.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+		// Логируем health check
+		if mongoRepo != nil {
+			go mongoRepo.LogHealthCheck(c.ClientIP())
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "mongodb": mongoRepo != nil})
 	})
 
 	// Auth endpoints
-	router.GET("/auth/:type", authHandler.InitAuth) // type: github, yandex, code
+	router.GET("/auth/:type", authHandler.InitAuth)
 	router.GET("/auth/callback/github", authHandler.GitHubCallback)
 	router.GET("/auth/callback/yandex", authHandler.YandexCallback)
 	router.POST("/auth/code/verify", codeAuthHandler.VerifyCode)
@@ -103,24 +158,168 @@ func main() {
 	router.POST("/token/validate", tokenHandler.ValidateToken)
 	router.POST("/logout", tokenHandler.Logout)
 
+	// MongoDB debug endpoint
+	if mongoRepo != nil {
+		router.GET("/debug/mongo", func(c *gin.Context) {
+			stats, err := mongoRepo.GetCollectionStats()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, stats)
+		})
+	}
+
 	// Статические файлы
 	router.Static("/static", "./static")
 
-	// Запуск сервера
-	port := os.Getenv("PORT")
+	// ============= ЗАПУСК СЕРВЕРА =============
+	port := cfg.ServerPort
 	if port == "" {
 		port = "8000"
 	}
 
 	log.Printf("Authorization server starting on port %s", port)
+	log.Printf("PostgreSQL: ✓")
+	log.Printf("Redis: ✓")
+	if mongoRepo != nil {
+		log.Printf("MongoDB: ✓")
+	} else {
+		log.Printf("MongoDB: ✗ (not connected)")
+	}
+
 	if err := router.Run(":" + port); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
 }
 
-// ============= АДАПТЕРЫ =============
+// ============= MONGODB РЕПОЗИТОРИЙ =============
 
-// SessionRepoAdapter - адаптер для redis.SessionRepository
+type MongoRepository struct {
+	client     *mongo.Client
+	database   *mongo.Database
+	collection *mongo.Collection
+}
+
+// LogAuthEvent логирует событие аутентификации в MongoDB
+func (r *MongoRepository) LogAuthEvent(userID, email, eventType, provider string) error {
+	if r.collection == nil {
+		return nil // MongoDB не подключен
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	event := map[string]interface{}{
+		"user_id":    userID,
+		"email":      email,
+		"event_type": eventType,
+		"provider":   provider,
+		"timestamp":  time.Now(),
+		"ip_address": "", // Можно добавить из контекста
+	}
+
+	_, err := r.collection.InsertOne(ctx, event)
+	return err
+}
+
+// LogHealthCheck логирует health check
+func (r *MongoRepository) LogHealthCheck(clientIP string) error {
+	if r.collection == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	event := map[string]interface{}{
+		"event_type": "health_check",
+		"timestamp":  time.Now(),
+		"ip_address": clientIP,
+	}
+
+	_, err := r.collection.InsertOne(ctx, event)
+	return err
+}
+
+// GetCollectionStats возвращает статистику коллекции
+func (r *MongoRepository) GetCollectionStats() (map[string]interface{}, error) {
+	if r.collection == nil {
+		return map[string]interface{}{"error": "MongoDB not connected"}, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Получаем количество документов
+	count, err := r.collection.CountDocuments(ctx, map[string]interface{}{})
+	if err != nil {
+		return nil, err
+	}
+
+	// Получаем последние 5 событий
+	cursor, err := r.collection.Find(ctx, map[string]interface{}{}, options.Find().SetSort(map[string]interface{}{"timestamp": -1}).SetLimit(5))
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	var recentEvents []map[string]interface{}
+	for cursor.Next(ctx) {
+		var event map[string]interface{}
+		if err := cursor.Decode(&event); err != nil {
+			continue
+		}
+		recentEvents = append(recentEvents, event)
+	}
+
+	return map[string]interface{}{
+		"collection": r.collection.Name(),
+		"count":      count,
+		"recent":     recentEvents,
+	}, nil
+}
+
+// ============= MIDDLEWARE ДЛЯ MONGODB ЛОГИРОВАНИЯ =============
+
+func mongoLoggingMiddleware(repo *MongoRepository) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Пропускаем health checks и статические файлы
+		if c.Request.URL.Path == "/health" || c.Request.URL.Path == "/debug/mongo" {
+			c.Next()
+			return
+		}
+
+		// Начало запроса
+		start := time.Now()
+
+		// Обрабатываем запрос
+		c.Next()
+
+		// Логируем после обработки
+		if repo != nil && repo.collection != nil {
+			go func() {
+				event := map[string]interface{}{
+					"path":        c.Request.URL.Path,
+					"method":      c.Request.Method,
+					"status":      c.Writer.Status(),
+					"duration_ms": time.Since(start).Milliseconds(),
+					"timestamp":   time.Now(),
+					"client_ip":   c.ClientIP(),
+					"user_agent":  c.Request.UserAgent(),
+				}
+
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				repo.collection.InsertOne(ctx, event)
+			}()
+		}
+	}
+}
+
+// ============= АДАПТЕРЫ (ваш существующий код) =============
+
 type SessionRepoAdapter struct {
 	repo *redis.SessionRepository
 }
@@ -158,7 +357,6 @@ func (a *SessionRepoAdapter) DeleteAuthSession(state string) error {
 	return a.repo.DeleteAuthSession(state)
 }
 
-// PostgresUserRepositoryAdapter - адаптер для postgres UserRepository
 type PostgresUserRepositoryAdapter struct {
 	db *sql.DB
 }
@@ -369,7 +567,6 @@ func (r *PostgresUserRepositoryAdapter) Deactivate(ctx context.Context, id strin
 	return err
 }
 
-// PostgresTokenRepositoryAdapter - адаптер для postgres TokenRepository
 type PostgresTokenRepositoryAdapter struct {
 	db *sql.DB
 }

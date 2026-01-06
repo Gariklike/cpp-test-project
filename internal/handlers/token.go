@@ -1,7 +1,7 @@
 ﻿package handlers
 
 import (
-	"log"
+	"log" // ДОБАВЬТЕ ЭТОТ ИМПОРТ
 	"net/http"
 
 	"authorization-server/internal/services"

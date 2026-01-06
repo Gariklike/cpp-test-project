@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ .title }}</title>
+</head>
+<body>
+    <h1>Добро пожаловать в опросник!</h1>
+    <form action="/survey/submit" method="post">
+        <label>Ваш любимый цвет:</label><br>
+        <input type="text" name="color" required><br><br>
+
+        <label>Ваш возраст:</label><br>
+        <input type="number" name="age" required><br><br>
+
+        <button type="submit">Отправить</button>
+    </form>
+</body>
+</html>

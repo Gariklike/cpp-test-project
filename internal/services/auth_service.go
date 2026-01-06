@@ -3,6 +3,7 @@
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"time"
@@ -18,7 +19,7 @@ const (
 	AuthStatusExpired = "expired"
 )
 
-// Определяем интерфейсы для репозиториев
+// Интерфейсы репозиториев
 type UserRepository interface {
 	GetByEmail(ctx context.Context, email string) (*models.User, error)
 	Create(ctx context.Context, user *models.User) (*models.User, error)
@@ -67,6 +68,7 @@ func NewAuthService(db *sql.DB, userRepo UserRepository, tokenRepo TokenReposito
 	}
 }
 
+// ValidateUser — для локального логина (если используется)
 func (s *AuthService) ValidateUser(username, password string) (*models.User, error) {
 	ctx := context.Background()
 	user, err := s.userRepo.GetByEmail(ctx, username)
@@ -79,18 +81,19 @@ func (s *AuthService) ValidateUser(username, password string) (*models.User, err
 	return user, nil
 }
 
+// ValidateLoginToken — оставляем минимальную заглушку (если используется в code-auth)
 func (s *AuthService) ValidateLoginToken(token string) (*models.User, error) {
 	if token == "" {
 		return nil, errors.New("empty token")
 	}
-	user := &models.User{
+	// Заглушка — можно доработать под реальную проверку
+	return &models.User{
 		ID:       "1",
 		Email:    "test@example.com",
 		FullName: "Test User",
 		IsActive: true,
 		Roles:    []string{"user"},
-	}
-	return user, nil
+	}, nil
 }
 
 func (s *AuthService) GetUserByEmail(email string) (*models.User, error) {
@@ -103,10 +106,48 @@ func (s *AuthService) GetUserByID(id string) (*models.User, error) {
 	return s.userRepo.GetByID(ctx, id)
 }
 
+// CreateUser — ИСПРАВЛЕНО: ID генерируется в БД
 func (s *AuthService) CreateUser(user *models.User) error {
 	ctx := context.Background()
-	_, err := s.userRepo.Create(ctx, user)
-	return err
+
+	user.CreatedAt = time.Now()
+	user.UpdatedAt = time.Now()
+	if user.Roles == nil {
+		user.Roles = []string{"user"}
+	}
+	if user.FullName == "" {
+		user.FullName = "User"
+	}
+
+	rolesJSON, err := json.Marshal(user.Roles)
+	if err != nil {
+		return err
+	}
+
+	// Запрос без ID — БД сгенерирует его сама
+	query := `
+		INSERT INTO users (email, full_name, roles, is_active, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id
+	`
+
+	var newID int64
+	err = s.db.QueryRowContext(ctx, query,
+		user.Email,
+		user.FullName,
+		rolesJSON,
+		true,
+		user.CreatedAt,
+		user.UpdatedAt,
+	).Scan(&newID)
+	if err != nil {
+		return err
+	}
+
+	// Присваиваем сгенерированный ID как строку
+	user.ID = strconv.FormatInt(newID, 10)
+
+	return nil
 }
 
 func (s *AuthService) UpdateUser(user *models.User) error {
@@ -121,8 +162,8 @@ func (s *AuthService) DeleteUser(id string) error {
 
 func (s *AuthService) GetUserPermissions(userID int) ([]string, error) {
 	user, err := s.GetUserByID(strconv.Itoa(userID))
-	if err != nil {
-		return nil, err
+	if err != nil || user == nil {
+		return []string{}, nil
 	}
 	return user.Roles, nil
 }
@@ -137,21 +178,16 @@ func (s *AuthService) ValidateRefreshToken(userID int, token string) (bool, erro
 	if err != nil {
 		return false, err
 	}
-
 	if refreshToken == nil {
 		return false, nil
 	}
-
-	// refreshToken.UserID уже int, всё ок
 	if refreshToken.UserID != userID {
 		return false, nil
 	}
-
 	if time.Now().After(refreshToken.ExpiresAt) {
 		s.tokenRepo.DeleteRefreshToken(token)
 		return false, nil
 	}
-
 	return true, nil
 }
 
@@ -164,7 +200,6 @@ func (s *AuthService) VerifyAuthCode(code string) (bool, error) {
 }
 
 func (s *AuthService) GetTokensByCode(code string) (*models.AuthTokens, error) {
-	// БЕЗ ExpiresIn и TokenType
 	return &models.AuthTokens{
 		AccessToken:  "dummy_access_token_" + code,
 		RefreshToken: "dummy_refresh_token_" + code,

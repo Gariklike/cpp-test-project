@@ -1,6 +1,7 @@
 ﻿package handlers
 
 import (
+	"log"
 	"net/http"
 
 	"authorization-server/internal/services"
@@ -85,6 +86,7 @@ func (h *TokenHandler) ValidateToken(c *gin.Context) {
 	})
 }
 
+// Logout обрабатывает POST запрос для выхода (для API)
 func (h *TokenHandler) Logout(c *gin.Context) {
 	var request struct {
 		RefreshToken string `json:"refresh_token" binding:"required"`
@@ -102,5 +104,52 @@ func (h *TokenHandler) Logout(c *gin.Context) {
 		return
 	}
 
+	// Очищаем куки
+	h.clearAuthCookies(c)
+
 	c.JSON(http.StatusOK, gin.H{"message": "Logged out successfully"})
+}
+
+// LogoutGet обрабатывает GET запрос для выхода (для браузера)
+func (h *TokenHandler) LogoutGet(c *gin.Context) {
+	// Получаем refresh token из куки или query параметра
+	refreshToken := c.Query("refresh_token")
+	if refreshToken == "" {
+		// Пробуем получить из куки
+		refreshToken, _ = c.Cookie("refresh_token")
+	}
+
+	// Если есть refresh token, удаляем его
+	if refreshToken != "" {
+		err := h.authService.DeleteRefreshToken(refreshToken)
+		if err != nil {
+			// Логируем ошибку, но продолжаем выход
+			log.Printf("Failed to delete refresh token: %v", err)
+		}
+	}
+
+	// Очищаем все авторизационные куки
+	h.clearAuthCookies(c)
+
+	// Перенаправляем на главную страницу
+	c.Redirect(http.StatusFound, "/")
+}
+
+// clearAuthCookies очищает все авторизационные куки
+func (h *TokenHandler) clearAuthCookies(c *gin.Context) {
+	authCookies := []string{
+		"access_token",
+		"refresh_token",
+		"session_token",
+		"session",
+		"token",
+		"auth_token",
+		"oauth_state",
+		"user_id",
+		"auth_state",
+	}
+
+	for _, cookieName := range authCookies {
+		c.SetCookie(cookieName, "", -1, "/", "", false, true)
+	}
 }

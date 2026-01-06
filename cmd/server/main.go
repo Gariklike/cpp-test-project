@@ -128,10 +128,19 @@ func main() {
 	codeAuthHandler := handlers.NewCodeAuthHandler(authService)
 
 	// ============= НАСТРОЙКА РОУТЕРА =============
-	router := gin.Default()
+	router := gin.New()
+	router.Use(gin.Logger())
+	router.Use(gin.RecoveryWithWriter(gin.DefaultWriter))
 
-	// Добавляем статические файлы (HTML страницы)
+	// Загружаем HTML-шаблоны (включая index.html)
 	router.LoadHTMLGlob("templates/*")
+
+	// === Главная страница ===
+	router.GET("/", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "index.html", gin.H{
+			"title": "Authorization Server",
+		})
+	})
 
 	// Middleware для логирования в MongoDB
 	if mongoRepo != nil {
@@ -140,7 +149,6 @@ func main() {
 
 	// Public endpoints
 	router.GET("/health", func(c *gin.Context) {
-		// Логируем health check
 		if mongoRepo != nil {
 			go mongoRepo.LogHealthCheck(c.ClientIP())
 		}
@@ -157,6 +165,7 @@ func main() {
 	router.POST("/token/refresh", tokenHandler.RefreshToken)
 	router.POST("/token/validate", tokenHandler.ValidateToken)
 	router.POST("/logout", tokenHandler.Logout)
+	router.GET("/logout", tokenHandler.LogoutGet) // ДОБАВЛЕН GET ДЛЯ ВЫХОДА
 
 	// MongoDB debug endpoint
 	if mongoRepo != nil {
@@ -193,7 +202,7 @@ func main() {
 	}
 }
 
-// ============= MONGODB РЕПОЗИТОРИЙ =============
+// ============= ОСТАЛЬНОЙ КОД (без изменений) =============
 
 type MongoRepository struct {
 	client     *mongo.Client
@@ -201,10 +210,9 @@ type MongoRepository struct {
 	collection *mongo.Collection
 }
 
-// LogAuthEvent логирует событие аутентификации в MongoDB
 func (r *MongoRepository) LogAuthEvent(userID, email, eventType, provider string) error {
 	if r.collection == nil {
-		return nil // MongoDB не подключен
+		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -216,14 +224,13 @@ func (r *MongoRepository) LogAuthEvent(userID, email, eventType, provider string
 		"event_type": eventType,
 		"provider":   provider,
 		"timestamp":  time.Now(),
-		"ip_address": "", // Можно добавить из контекста
+		"ip_address": "",
 	}
 
 	_, err := r.collection.InsertOne(ctx, event)
 	return err
 }
 
-// LogHealthCheck логирует health check
 func (r *MongoRepository) LogHealthCheck(clientIP string) error {
 	if r.collection == nil {
 		return nil
@@ -242,7 +249,6 @@ func (r *MongoRepository) LogHealthCheck(clientIP string) error {
 	return err
 }
 
-// GetCollectionStats возвращает статистику коллекции
 func (r *MongoRepository) GetCollectionStats() (map[string]interface{}, error) {
 	if r.collection == nil {
 		return map[string]interface{}{"error": "MongoDB not connected"}, nil
@@ -251,13 +257,11 @@ func (r *MongoRepository) GetCollectionStats() (map[string]interface{}, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Получаем количество документов
 	count, err := r.collection.CountDocuments(ctx, map[string]interface{}{})
 	if err != nil {
 		return nil, err
 	}
 
-	// Получаем последние 5 событий
 	cursor, err := r.collection.Find(ctx, map[string]interface{}{}, options.Find().SetSort(map[string]interface{}{"timestamp": -1}).SetLimit(5))
 	if err != nil {
 		return nil, err
@@ -280,23 +284,16 @@ func (r *MongoRepository) GetCollectionStats() (map[string]interface{}, error) {
 	}, nil
 }
 
-// ============= MIDDLEWARE ДЛЯ MONGODB ЛОГИРОВАНИЯ =============
-
 func mongoLoggingMiddleware(repo *MongoRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Пропускаем health checks и статические файлы
 		if c.Request.URL.Path == "/health" || c.Request.URL.Path == "/debug/mongo" {
 			c.Next()
 			return
 		}
 
-		// Начало запроса
 		start := time.Now()
-
-		// Обрабатываем запрос
 		c.Next()
 
-		// Логируем после обработки
 		if repo != nil && repo.collection != nil {
 			go func() {
 				event := map[string]interface{}{
@@ -317,8 +314,6 @@ func mongoLoggingMiddleware(repo *MongoRepository) gin.HandlerFunc {
 		}
 	}
 }
-
-// ============= АДАПТЕРЫ (ваш существующий код) =============
 
 type SessionRepoAdapter struct {
 	repo *redis.SessionRepository

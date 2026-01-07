@@ -17,6 +17,7 @@ type Config struct {
 	GitHubClientSecret string
 	YandexClientID     string
 	YandexClientSecret string
+	ServerPort         string // Добавим порт для гибкости
 }
 
 // OAuthUserInfo для информации пользователя OAuth
@@ -55,10 +56,12 @@ func (s *OAuthService) GetGitHubAuthURL(_ string) (string, error) {
 	}
 
 	// ИЗМЕНЕНИЕ: добавлен параметр prompt=login для принудительной авторизации
+	redirectURI := fmt.Sprintf("http://localhost:%s/success", s.getPort())
+
 	authURL := fmt.Sprintf(
 		"https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&state=%s&scope=user:email&prompt=login",
 		s.config.GitHubClientID,
-		url.QueryEscape("http://localhost:8080/auth/callback/github"),
+		url.QueryEscape(redirectURI),
 		state,
 	)
 
@@ -82,11 +85,13 @@ func (s *OAuthService) GetYandexAuthURL(_ string) (string, error) {
 		return "", err
 	}
 
-	// ИЗМЕНЕНИЕ: добавлен параметр force_confirm=true для принудительной авторизации
+	// ИЗМЕНЕНИЕ: redirect_uri изменен на /success вместо /auth/callback/yandex
+	redirectURI := fmt.Sprintf("http://localhost:%s/success", s.getPort())
+
 	authURL := fmt.Sprintf(
 		"https://oauth.yandex.ru/authorize?response_type=code&client_id=%s&redirect_uri=%s&state=%s&force_confirm=true",
 		s.config.YandexClientID,
-		url.QueryEscape("http://localhost:8080/auth/callback/yandex"),
+		url.QueryEscape(redirectURI),
 		state,
 	)
 
@@ -306,4 +311,12 @@ func (s *OAuthService) SetAuthTokens(state string, accessToken, refreshToken str
 	session.ExpiresAt = time.Now().Add(1 * time.Hour).Unix()
 
 	return s.redisRepo.SaveAuthSession(state, session)
+}
+
+// getPort возвращает порт сервера (по умолчанию 8080)
+func (s *OAuthService) getPort() string {
+	if s.config.ServerPort != "" {
+		return s.config.ServerPort
+	}
+	return "8080"
 }

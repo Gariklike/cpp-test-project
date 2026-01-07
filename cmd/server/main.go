@@ -109,6 +109,7 @@ func main() {
 		GitHubClientSecret: cfg.GitHubClientSecret,
 		YandexClientID:     cfg.YandexClientID,
 		YandexClientSecret: cfg.YandexClientSecret,
+		ServerPort:         cfg.ServerPort, // Добавляем порт в конфиг
 	}
 
 	// ============= ИНИЦИАЛИЗАЦИЯ СЕРВИСОВ =============
@@ -132,15 +133,28 @@ func main() {
 	router.Use(gin.Logger())
 	router.Use(gin.RecoveryWithWriter(gin.DefaultWriter))
 
-	// Загружаем HTML-шаблоны (включая index.html)
+	// Загружаем HTML-шаблоны (включая index.html, login.html, register.html)
 	router.LoadHTMLGlob("templates/*")
 
 	// === Главная страница ===
-	router.GET("/", func(c *gin.Context) {
-		c.HTML(http.StatusOK, "index.html", gin.H{
-			"title": "Authorization Server",
+	router.GET("/", authHandler.HomePage)
+
+	// === Страница логина (ДОБАВЛЕНО) ===
+	router.GET("/login", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "login.html", gin.H{
+			"title": "Login",
 		})
 	})
+
+	// === Страница регистрации (ДОБАВЛЕНО) ===
+	router.GET("/register", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "register.html", gin.H{
+			"title": "Register",
+		})
+	})
+
+	// === Страница успешной авторизации (НОВОЕ!) ===
+	router.GET("/success", authHandler.SuccessPage)
 
 	// Middleware для логирования в MongoDB
 	if mongoRepo != nil {
@@ -165,7 +179,7 @@ func main() {
 	router.POST("/token/refresh", tokenHandler.RefreshToken)
 	router.POST("/token/validate", tokenHandler.ValidateToken)
 	router.POST("/logout", tokenHandler.Logout)
-	router.GET("/logout", tokenHandler.LogoutGet) // ДОБАВЛЕН GET ДЛЯ ВЫХОДА
+	router.GET("/logout", tokenHandler.LogoutGet)
 
 	// MongoDB debug endpoint
 	if mongoRepo != nil {

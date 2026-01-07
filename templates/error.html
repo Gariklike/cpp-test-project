@@ -4,15 +4,81 @@
     <meta charset="UTF-8">
     <title>Ошибка авторизации</title>
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; margin-top: 100px; background: #f8f8f8; color: #333; }
-        h1 { color: #d9534f; }
-        a { color: #337ab7; text-decoration: none; font-size: 1.2rem; }
-        a:hover { text-decoration: underline; }
+        body { 
+            font-family: Arial, sans-serif; 
+            text-align: center; 
+            margin-top: 100px; 
+            background: #f8f8f8; 
+            color: #333; 
+            padding: 20px;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { 
+            color: #d9534f; 
+            margin-bottom: 20px;
+        }
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            text-align: left;
+            font-size: 14px;
+        }
+        .details {
+            background: #fff3cd;
+            color: #856404;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            text-align: left;
+            font-size: 12px;
+            display: {{ if .details }}block{{ else }}none{{ end }};
+        }
+        a { 
+            display: inline-block;
+            margin-top: 20px; 
+            padding: 10px 20px; 
+            background: #337ab7; 
+            color: white; 
+            text-decoration: none; 
+            border-radius: 5px; 
+            font-size: 1.1rem;
+            transition: background 0.3s;
+        }
+        a:hover { 
+            background: #286090;
+            text-decoration: none;
+        }
     </style>
 </head>
 <body>
-    <h1>Ошибка авторизации</h1>
-    <p>{{ .message }}</p>
-    <p><a href="/">← Вернуться на главную</a></p>
+    <div class="container">
+        <h1>Ошибка авторизации</h1>
+        
+        {{if .message}}
+        <div class="error-message">
+            <strong>Сообщение:</strong> {{.message}}
+        </div>
+        {{end}}
+        
+        {{if .details}}
+        <div class="details">
+            <strong>Детали ошибки:</strong><br>
+            {{.details}}
+        </div>
+        {{end}}
+        
+        <p><a href="/">← Вернуться на главную</a></p>
+        <p><a href="/login">Попробовать снова</a></p>
+    </div>
 </body>
 </html>

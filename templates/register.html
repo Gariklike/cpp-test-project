@@ -51,7 +51,7 @@
         button {
             width: 100%;
             padding: 1rem;
-            background: #6366F1;
+            background: #10B981;
             color: white;
             border: none;
             border-radius: 8px;
@@ -61,7 +61,7 @@
             transition: background 0.3s ease;
         }
         button:hover {
-            background: #4f46e5;
+            background: #0da271;
         }
         .links {
             text-align: center;
@@ -75,66 +75,80 @@
         .links a:hover {
             text-decoration: underline;
         }
-        .back-link {
-            display: inline-block;
-            margin-top: 1rem;
-            color: #6366F1;
-            text-decoration: none;
-        }
-        .back-link:hover {
-            text-decoration: underline;
-        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Вход в систему</h1>
-        <form id="loginForm">
+        <h1>Регистрация</h1>
+        <form id="registerForm">
+            <div class="form-group">
+                <label for="fullName">ФИО</label>
+                <input type="text" id="fullName" name="fullName" required placeholder="Введите ваше ФИО">
+            </div>
             <div class="form-group">
                 <label for="email">Email</label>
                 <input type="email" id="email" name="email" required placeholder="Введите ваш email">
             </div>
             <div class="form-group">
                 <label for="password">Пароль</label>
-                <input type="password" id="password" name="password" required placeholder="Введите пароль">
+                <input type="password" id="password" name="password" required placeholder="Придумайте пароль">
             </div>
-            <button type="submit">Войти</button>
+            <div class="form-group">
+                <label for="confirmPassword">Подтвердите пароль</label>
+                <input type="password" id="confirmPassword" name="confirmPassword" required placeholder="Повторите пароль">
+            </div>
+            <button type="submit">Зарегистрироваться</button>
         </form>
         
         <div class="links">
-            <p><a href="/register">Нет аккаунта? Зарегистрироваться</a></p>
+            <p>Уже есть аккаунт? <a href="/login">Войти</a></p>
             <p><a href="/">Вернуться на главную</a></p>
         </div>
     </div>
 
     <script>
-        document.getElementById('loginForm').addEventListener('submit', function(e) {
+        document.getElementById('registerForm').addEventListener('submit', function(e) {
             e.preventDefault();
             
+            const fullName = document.getElementById('fullName').value;
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
             
-            // Здесь будет запрос к API для авторизации
-            fetch('/auth/login', {
+            if (password !== confirmPassword) {
+                alert('Пароли не совпадают!');
+                return;
+            }
+            
+            if (password.length < 6) {
+                alert('Пароль должен быть не менее 6 символов');
+                return;
+            }
+            
+            // Здесь будет запрос к API для регистрации
+            fetch('/auth/register', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ email, password })
+                body: JSON.stringify({ 
+                    fullName, 
+                    email, 
+                    password 
+                })
             })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    alert('Успешный вход!');
-                    // Перенаправление на защищенную страницу
-                    window.location.href = '/dashboard';
+                    alert('Регистрация успешна! Теперь вы можете войти.');
+                    window.location.href = '/login';
                 } else {
-                    alert('Ошибка: ' + (data.message || 'Неверные учетные данные'));
+                    alert('Ошибка: ' + (data.message || 'Не удалось зарегистрироваться'));
                 }
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('Произошла ошибка при входе');
+                alert('Произошла ошибка при регистрации');
             });
         });
     </script>

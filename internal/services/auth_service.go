@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"authorization-server/internal/models"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 // Константы для статусов авторизации
@@ -70,39 +68,16 @@ func NewAuthService(db *sql.DB, userRepo UserRepository, tokenRepo TokenReposito
 	}
 }
 
-// hashPassword - хеширует пароль
-func hashPassword(password string) (string, error) {
-	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	return string(bytes), err
-}
-
-// checkPasswordHash - проверяет пароль
-func checkPasswordHash(password, hash string) bool {
-	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
-	return err == nil
-}
-
-// ValidateUser — проверка пользователя (email и пароль)
-func (s *AuthService) ValidateUser(email, password string) (*models.User, error) {
+// ValidateUser — для локального логина (если используется)
+func (s *AuthService) ValidateUser(username, password string) (*models.User, error) {
 	ctx := context.Background()
-	user, err := s.userRepo.GetByEmail(ctx, email)
+	user, err := s.userRepo.GetByEmail(ctx, username)
 	if err != nil {
 		return nil, err
 	}
 	if user == nil {
 		return nil, errors.New("user not found")
 	}
-
-	// TODO: Раскомментировать, когда добавите поле PasswordHash в модель User
-	// if user.PasswordHash == "" {
-	//     return nil, errors.New("password not set")
-	// }
-
-	// TODO: Раскомментировать, когда добавите поле PasswordHash в модель User
-	// if !checkPasswordHash(password, user.PasswordHash) {
-	//     return nil, errors.New("invalid password")
-	// }
-
 	return user, nil
 }
 

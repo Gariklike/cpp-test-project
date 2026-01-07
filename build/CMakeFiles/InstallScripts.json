@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/projects/Backend/build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

@@ -1,21 +1,29 @@
-#include <iostream>
-#include <locale>
+#include "auth_client.hpp"
 #include "main_module.hpp"
+#include <iostream>
 
 int main(int argc, char* argv[]) {
-
-    // По умолчанию используем файл questions.json
     std::string filename = "questions.json";
-    if (argc > 1) {
-        filename = argv[1];
+    if (argc > 1) filename = argv[1];
+
+    std::string userCode = "TEST_CODE"; // код авторизации
+    if (argc > 2) userCode = argv[2];
+
+    AuthClient auth;
+    std::string token = auth.getAccessToken(userCode);
+
+    if (token.empty()) {
+        std::cout << "Не удалось получить токен\n";
+        return 1;
     }
 
-    // Идентификатор пользователя (пока заглушка, позже можно связать с модулем авторизации)
-    std::string userId = "user123";
+    if (!auth.hasPermission(token, "start_test")) {
+        std::cout << "У вас нет прав на запуск теста\n";
+        return 1;
+    }
 
-    // Запуск главного модуля
     MainModule app;
-    app.startTest(filename, userId);
+    app.startTest(filename, userCode);
 
     return 0;
 }

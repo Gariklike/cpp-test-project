@@ -1,7 +1,12 @@
 #include "main_module.hpp"
 #include <iostream>
 
-void MainModule::startTest(const std::string& filename) {
+void MainModule::startTest(const std::string& filename, const std::string& userId) {
+    if (!auth.hasPermission(userId, "start_test")) {
+        std::cout << "Доступ запрещён: нет прав на запуск теста\n";
+        return;
+    }
+
     auto questions = TestEngine::loadQuestions(filename);
     std::cout << "Загружено вопросов: " << questions.size() << "\n";
     TestEngine engine;

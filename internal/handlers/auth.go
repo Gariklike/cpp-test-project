@@ -150,14 +150,15 @@ func (h *AuthHandler) processOAuthCallback(c *gin.Context, state, email, name st
 		// Генерируем ID для нового пользователя
 		userID := uuid.New().String()
 		newUser := &models.User{
-			ID:          userID,
-			Email:       email,
-			FullName:    name,
-			IsActive:    true,
-			Roles:       []string{"user"},
-			LoginMethod: "oauth",
-			CreatedAt:   time.Now(),
-			UpdatedAt:   time.Now(),
+			ID:           userID, // Исправлено: должно быть ID
+			Email:        email,
+			FullName:     name,
+			PasswordHash: "", // Явно указываем пустой пароль для OAuth
+			IsActive:     true,
+			Roles:        []string{"user"},
+			LoginMethod:  "oauth",
+			CreatedAt:    time.Now(),
+			UpdatedAt:    time.Now(),
 		}
 
 		if err := h.authService.CreateUser(newUser); err != nil {
@@ -257,13 +258,32 @@ func (h *AuthHandler) LocalLogin(c *gin.Context) {
 		return
 	}
 
-	// Проверяем, есть ли пароль у пользователя (не OAuth-пользователь)
-	if user.PasswordHash == "" || strings.TrimSpace(user.PasswordHash) == "" {
+	// ПРОВЕРКА 1: Если пользователь создан через OAuth
+	if user.LoginMethod == "oauth" {
 		c.HTML(http.StatusUnauthorized, "login.html", gin.H{
 			"title": "Вход",
-			"error": "Этот аккаунт создан через социальный логин. Используйте его.",
+			"error": "Этот аккаунт создан через социальный логин. Используйте OAuth для входа.",
 			"email": email,
 		})
+		return
+	}
+
+	// ПРОВЕРКА 2: Если у пользователя нет пароля (старые записи)
+	if user.PasswordHash == "" || strings.TrimSpace(user.PasswordHash) == "" {
+		// Если это локальный пользователь, но пароль не установлен
+		if user.LoginMethod == "local" || user.LoginMethod == "" {
+			c.HTML(http.StatusUnauthorized, "login.html", gin.H{
+				"title": "Вход",
+				"error": "У этого аккаунта не установлен пароль. Используйте восстановление пароля.",
+				"email": email,
+			})
+		} else {
+			c.HTML(http.StatusUnauthorized, "login.html", gin.H{
+				"title": "Вход",
+				"error": "Этот аккаунт создан через социальный логин.",
+				"email": email,
+			})
+		}
 		return
 	}
 
@@ -311,13 +331,20 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		return
 	}
 
+	log.Println("=== НАЧАЛО РЕГИСТРАЦИИ ===")
+
+	// Получаем данные из формы
 	email := strings.TrimSpace(c.PostForm("email"))
 	fullName := strings.TrimSpace(c.PostForm("full_name"))
 	password := c.PostForm("password")
 	confirmPassword := c.PostForm("confirm_password")
 
+	log.Printf("Получены данные: email='%s', fullName='%s', password_len=%d, confirm_len=%d",
+		email, fullName, len(password), len(confirmPassword))
+
 	// Валидация обязательных полей
 	if email == "" || password == "" || fullName == "" || confirmPassword == "" {
+		log.Printf("Ошибка: не все поля заполнены")
 		c.HTML(http.StatusBadRequest, "register.html", gin.H{
 			"title":    "Регистрация",
 			"error":    "Заполните все поля",
@@ -329,6 +356,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	// Проверка совпадения паролей
 	if password != confirmPassword {
+		log.Printf("Ошибка: пароли не совпадают")
 		c.HTML(http.StatusBadRequest, "register.html", gin.H{
 			"title":    "Регистрация",
 			"error":    "Пароли не совпадают",
@@ -340,6 +368,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	// Проверка формата email
 	if !isValidEmail(email) {
+		log.Printf("Ошибка: некорректный email формат: %s", email)
 		c.HTML(http.StatusBadRequest, "register.html", gin.H{
 			"title":    "Регистрация",
 			"error":    "Некорректный формат email",
@@ -351,6 +380,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	// Проверка длины пароля
 	if len(password) < 6 {
+		log.Printf("Ошибка: пароль слишком короткий: %d символов", len(password))
 		c.HTML(http.StatusBadRequest, "register.html", gin.H{
 			"title":    "Регистрация",
 			"error":    "Пароль должен содержать минимум 6 символов",
@@ -361,6 +391,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	// Проверка существующего пользователя
+	log.Printf("Проверка существующего пользователя с email: %s", email)
 	existing, err := h.authService.GetUserByEmail(email)
 	if err != nil {
 		log.Printf("Ошибка проверки email: %v", err)
@@ -374,6 +405,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	if existing != nil {
+		log.Printf("Ошибка: пользователь уже существует: %s", email)
 		c.HTML(http.StatusBadRequest, "register.html", gin.H{
 			"title":    "Регистрация",
 			"error":    "Пользователь с таким email уже существует",
@@ -384,18 +416,24 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	// Хеширование пароля
+	log.Printf("Хеширование пароля для email: %s", email)
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		log.Printf("Ошибка хэширования пароля: %v", err)
-		c.HTML(http.StatusInternalServerError, "error.html", gin.H{"message": "Ошибка сервера при обработке пароля"})
+		c.HTML(http.StatusInternalServerError, "error.html", gin.H{
+			"title":   "Ошибка сервера",
+			"message": "Ошибка сервера при обработке пароля",
+		})
 		return
 	}
 
 	// Генерация UUID для пользователя
 	userID := uuid.New().String()
+	log.Printf("Сгенерирован ID пользователя: %s", userID)
 
 	// Устанавливаем роль "student" для соответствия вашей БД
 	roles := []string{"student"}
+	log.Printf("Установлены роли: %v", roles)
 
 	newUser := &models.User{
 		ID:           userID,
@@ -408,6 +446,8 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
+
+	log.Printf("Создание пользователя в БД: %+v", newUser)
 
 	// Создание пользователя в базе
 	if err := h.authService.CreateUser(newUser); err != nil {
@@ -423,8 +463,35 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	log.Printf("Успешная регистрация: %s (ID: %s, Name: %s)", email, userID, fullName)
 
-	// После успешной регистрации редирект на страницу входа с сообщением
-	c.Redirect(http.StatusFound, "/login?registered=success&email="+email)
+	// Автоматический логин после регистрации
+	userIDInt := h.convertUserIDToInt(userID)
+
+	// Получаем разрешения для пользователя
+	permissions, _ := h.authService.GetUserPermissions(userIDInt)
+
+	// Генерируем токены
+	accessToken, err := h.tokenService.GenerateAccessToken(userIDInt, permissions)
+	if err != nil {
+		log.Printf("Ошибка генерации access token после регистрации: %v", err)
+	} else {
+		refreshToken, err := h.tokenService.GenerateRefreshToken(userIDInt, email)
+		if err != nil {
+			log.Printf("Ошибка генерации refresh token после регистрации: %v", err)
+		} else {
+			// Сохраняем refresh токен
+			h.authService.SaveRefreshToken(userIDInt, refreshToken)
+
+			// Устанавливаем куки
+			c.SetCookie("access_token", accessToken, 3600, "/", "", false, true)
+			c.SetCookie("refresh_token", refreshToken, 86400*30, "/", "", false, true)
+
+			log.Printf("Токены успешно созданы для нового пользователя")
+		}
+	}
+
+	// После успешной регистрации редирект на страницу успеха
+	c.Redirect(http.StatusFound, "/success")
+	log.Println("=== УСПЕШНОЕ ЗАВЕРШЕНИЕ РЕГИСТРАЦИИ ===")
 }
 
 // SuccessPage — страница успешной авторизации
@@ -526,13 +593,59 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 
 // Вспомогательная функция для проверки email
 func isValidEmail(email string) bool {
-	// Простая проверка на наличие @ и точки, а также отсутствие пробелов
-	if !strings.Contains(email, "@") || !strings.Contains(email, ".") || strings.Contains(email, " ") {
+	email = strings.TrimSpace(email)
+
+	// Проверка пустого email
+	if email == "" {
 		return false
 	}
 
-	// Проверка на двойные @ (ваша ошибка из базы)
+	// Проверка на наличие @ и точки
+	if !strings.Contains(email, "@") || !strings.Contains(email, ".") {
+		return false
+	}
+
+	// Проверка на пробелы
+	if strings.Contains(email, " ") {
+		return false
+	}
+
+	// Проверка на двойные @
 	if strings.Count(email, "@") > 1 {
+		return false
+	}
+
+	// Проверка, что @ не первый и не последний символ
+	if email[0] == '@' || email[len(email)-1] == '@' {
+		return false
+	}
+
+	// Разделяем email на локальную часть и домен
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 {
+		return false
+	}
+
+	localPart := parts[0]
+	domainPart := parts[1]
+
+	// Проверка локальной части
+	if localPart == "" {
+		return false
+	}
+
+	// Проверка домена
+	if domainPart == "" || !strings.Contains(domainPart, ".") {
+		return false
+	}
+
+	// Проверка, что точка в домене не первая и не последняя
+	if domainPart[0] == '.' || domainPart[len(domainPart)-1] == '.' {
+		return false
+	}
+
+	// Проверка двойных точек в домене
+	if strings.Contains(domainPart, "..") {
 		return false
 	}
 

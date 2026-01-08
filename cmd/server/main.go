@@ -136,24 +136,38 @@ func main() {
 	// Загружаем HTML-шаблоны (включая index.html, login.html, register.html)
 	router.LoadHTMLGlob("templates/*")
 
+	// ============= РАЗДАЧА СТАТИЧЕСКИХ ФАЙЛОВ =============
+	// Раздача статических файлов из папки templates (для шаблонов)
+	router.Static("/static", "./static")
+
+	// ============= ДОБАВЛЕНО: Раздача файлов с вопросами =============
+	// Раздача статических файлов из папки pkg/question-site
+	router.Static("/questions", "./pkg/question-site")
+	// ================================================================
+
 	// === Главная страница ===
 	router.GET("/", authHandler.HomePage)
 
-	// === Страница логина (ДОБАВЛЕНО) ===
+	// === Страница логина ===
 	router.GET("/login", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "login.html", gin.H{
 			"title": "Login",
 		})
 	})
 
-	// === Страница регистрации (ДОБАВЛЕНО) ===
+	// === Страница регистрации ===
+	// GET для отображения формы регистрации
 	router.GET("/register", func(c *gin.Context) {
 		c.HTML(http.StatusOK, "register.html", gin.H{
 			"title": "Register",
 		})
 	})
 
-	// === Страница успешной авторизации (НОВОЕ!) ===
+	// POST для обработки формы регистрации
+	router.POST("/register", authHandler.Register)
+	router.POST("/auth/register", authHandler.Register)
+
+	// === Страница успешной авторизации ===
 	router.GET("/success", authHandler.SuccessPage)
 
 	// Middleware для логирования в MongoDB
@@ -193,9 +207,6 @@ func main() {
 		})
 	}
 
-	// Статические файлы
-	router.Static("/static", "./static")
-
 	// ============= ЗАПУСК СЕРВЕРА =============
 	port := cfg.ServerPort
 	if port == "" {
@@ -210,13 +221,14 @@ func main() {
 	} else {
 		log.Printf("MongoDB: ✗ (not connected)")
 	}
+	log.Printf("Questions available at: http://localhost:%s/questions/index.html", port)
 
 	if err := router.Run(":" + port); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
 }
 
-// ============= ОСТАЛЬНОЙ КОД (без изменений) =============
+// ============= ОСТАЛЬНОЙ КОД =============
 
 type MongoRepository struct {
 	client     *mongo.Client
@@ -372,13 +384,15 @@ type PostgresUserRepositoryAdapter struct {
 
 func (r *PostgresUserRepositoryAdapter) GetByEmail(ctx context.Context, email string) (*models.User, error) {
 	query := `
-		SELECT id, email, full_name, roles, is_active, created_at, updated_at
+		SELECT id, email, full_name, roles, is_active, created_at, updated_at, password_hash, login_method
 		FROM users
 		WHERE email = $1
 	`
 
 	var user models.User
 	var rolesStr string
+	var passwordHash sql.NullString
+	var loginMethod sql.NullString
 
 	err := r.db.QueryRowContext(ctx, query, email).Scan(
 		&user.ID,
@@ -388,6 +402,8 @@ func (r *PostgresUserRepositoryAdapter) GetByEmail(ctx context.Context, email st
 		&user.IsActive,
 		&user.CreatedAt,
 		&user.UpdatedAt,
+		&passwordHash,
+		&loginMethod,
 	)
 
 	if err != nil {
@@ -395,6 +411,13 @@ func (r *PostgresUserRepositoryAdapter) GetByEmail(ctx context.Context, email st
 			return nil, nil
 		}
 		return nil, err
+	}
+
+	if passwordHash.Valid {
+		user.PasswordHash = passwordHash.String
+	}
+	if loginMethod.Valid {
+		user.LoginMethod = loginMethod.String
 	}
 
 	if err := json.Unmarshal([]byte(rolesStr), &user.Roles); err != nil {
@@ -414,9 +437,12 @@ func (r *PostgresUserRepositoryAdapter) Create(ctx context.Context, user *models
 		return nil, err
 	}
 
+	// ИСПРАВЛЕННЫЙ ЗАПРОС - добавлены password_hash и login_method
 	query := `
-		INSERT INTO users (id, email, full_name, roles, is_active, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO users (
+			id, email, full_name, roles, is_active, 
+			created_at, updated_at, password_hash, login_method
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id, email, full_name, roles, is_active, created_at, updated_at
 	`
 
@@ -429,6 +455,8 @@ func (r *PostgresUserRepositoryAdapter) Create(ctx context.Context, user *models
 		user.IsActive,
 		user.CreatedAt,
 		user.UpdatedAt,
+		user.PasswordHash,
+		user.LoginMethod,
 	).Scan(
 		&user.ID,
 		&user.Email,
@@ -452,13 +480,15 @@ func (r *PostgresUserRepositoryAdapter) Create(ctx context.Context, user *models
 
 func (r *PostgresUserRepositoryAdapter) GetByID(ctx context.Context, id string) (*models.User, error) {
 	query := `
-		SELECT id, email, full_name, roles, is_active, created_at, updated_at
+		SELECT id, email, full_name, roles, is_active, created_at, updated_at, password_hash, login_method
 		FROM users
 		WHERE id = $1
 	`
 
 	var user models.User
 	var rolesStr string
+	var passwordHash sql.NullString
+	var loginMethod sql.NullString
 
 	err := r.db.QueryRowContext(ctx, query, id).Scan(
 		&user.ID,
@@ -468,6 +498,8 @@ func (r *PostgresUserRepositoryAdapter) GetByID(ctx context.Context, id string) 
 		&user.IsActive,
 		&user.CreatedAt,
 		&user.UpdatedAt,
+		&passwordHash,
+		&loginMethod,
 	)
 
 	if err != nil {
@@ -475,6 +507,13 @@ func (r *PostgresUserRepositoryAdapter) GetByID(ctx context.Context, id string) 
 			return nil, nil
 		}
 		return nil, err
+	}
+
+	if passwordHash.Valid {
+		user.PasswordHash = passwordHash.String
+	}
+	if loginMethod.Valid {
+		user.LoginMethod = loginMethod.String
 	}
 
 	if err := json.Unmarshal([]byte(rolesStr), &user.Roles); err != nil {
@@ -492,9 +531,17 @@ func (r *PostgresUserRepositoryAdapter) Update(ctx context.Context, user *models
 		return err
 	}
 
+	// ИСПРАВЛЕННЫЙ ЗАПРОС - добавлены password_hash и login_method
 	query := `
 		UPDATE users
-		SET email = $2, full_name = $3, roles = $4, is_active = $5, updated_at = $6
+		SET 
+			email = $2, 
+			full_name = $3, 
+			roles = $4, 
+			is_active = $5, 
+			updated_at = $6,
+			password_hash = $7,
+			login_method = $8
 		WHERE id = $1
 	`
 
@@ -505,6 +552,8 @@ func (r *PostgresUserRepositoryAdapter) Update(ctx context.Context, user *models
 		string(rolesJSON),
 		user.IsActive,
 		user.UpdatedAt,
+		user.PasswordHash,
+		user.LoginMethod,
 	)
 
 	return err
@@ -518,7 +567,7 @@ func (r *PostgresUserRepositoryAdapter) Delete(ctx context.Context, id string) e
 
 func (r *PostgresUserRepositoryAdapter) List(ctx context.Context, limit, offset int) ([]*models.User, error) {
 	query := `
-		SELECT id, email, full_name, roles, is_active, created_at, updated_at
+		SELECT id, email, full_name, roles, is_active, created_at, updated_at, password_hash, login_method
 		FROM users
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
@@ -534,6 +583,8 @@ func (r *PostgresUserRepositoryAdapter) List(ctx context.Context, limit, offset 
 	for rows.Next() {
 		var user models.User
 		var rolesStr string
+		var passwordHash sql.NullString
+		var loginMethod sql.NullString
 
 		if err := rows.Scan(
 			&user.ID,
@@ -543,8 +594,17 @@ func (r *PostgresUserRepositoryAdapter) List(ctx context.Context, limit, offset 
 			&user.IsActive,
 			&user.CreatedAt,
 			&user.UpdatedAt,
+			&passwordHash,
+			&loginMethod,
 		); err != nil {
 			return nil, err
+		}
+
+		if passwordHash.Valid {
+			user.PasswordHash = passwordHash.String
+		}
+		if loginMethod.Valid {
+			user.LoginMethod = loginMethod.String
 		}
 
 		if err := json.Unmarshal([]byte(rolesStr), &user.Roles); err != nil {
